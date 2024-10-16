@@ -31,17 +31,12 @@ const sendVerificationEmail = async (to, subject, templateName, context) => {
   }
 };
 
-const sendJobAlerts = async (subject, templateName, context, job) => {
-    const templatePath = path.join(__dirname, `../emailTemplates/${templateName}.hbs`);
-    const emailTemplate = await fs.readFile(templatePath, 'utf-8');
-    const compiledTemplate = handlebars.compile(emailTemplate);
-    const html = compiledTemplate(context);
-    const mailOptions = {
+const sendJobAlerts = async (job) => {
+  const mailOptions = {
     from: process.env.EMAIL_USER,
-    subject: subject,
-    html : html,
+    subject: `New Job Opportunity: ${job.jobTitle}`,
+    text: `A new job matching your profile has been posted:\n\nTitle: ${job.jobTitle}\nDescription: ${job.jobDescription}\nExperience Level: ${job.experienceLevel}\n\nApply now!`,
   };
-
   for (const candidate of job.candidates) {
     mailOptions.to = candidate;
     try {

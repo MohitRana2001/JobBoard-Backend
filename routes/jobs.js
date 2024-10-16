@@ -8,7 +8,6 @@ const { sendJobAlerts } = require('../utils/emailService');
 router.post('/', auth, async (req, res) => {
   try {
     const { jobTitle, jobDescription, experienceLevel, candidates, endDate } = req.body;
-    // console.log(req.body);
     const newJob = new Job({
       company: req.company.id,
       jobTitle,
@@ -17,12 +16,15 @@ router.post('/', auth, async (req, res) => {
       candidates,
       endDate
     });
-    console.log("job created");
+
     const job = await newJob.save();
-    console.log("job saved");
+    
+    // Populate the company details
+    await job.populate('company', 'companyName');
+
     // Send job alerts to candidates
-    await sendJobAlerts(candidates,  'jobAlert','New Job Opportunity',job);
-    console.log("job alerts sent");
+    await sendJobAlerts(job);
+
     res.status(201).json(job);
   } catch (err) {
     console.error(err.message);
