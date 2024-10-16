@@ -1,68 +1,65 @@
 const express = require('express');
+const router = express.Router();
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
-const dotenv = require('dotenv');
-const Company = require('../models/Company'); // Assuming the company model is in models folder
-const auth = require('../middleware/auth');
+const Company = require('../models/Company');
 const { sendVerificationEmail } = require('../utils/emailService');
-const { sendVerificationSMS } = require('../utils/smsService');
+const { sendSMS } = require('../utils/smsService');
+const { generateOTP, storeOTP, verifyOTP } = require('../utils/otpService');
+const { registerSchema, loginSchema, verifyEmailSchema, verifyMobileSchema, resetPasswordSchema } = require('../validation/authValidation');
 
-dotenv.config();
-
-const router = express.Router();
-
-// Register a new company
 router.post('/register', async (req, res) => {
   try {
-    const { name, phone, companyName, companyEmail, employeeSize, password } = req.body;
+    const validatedData = registerSchema.parse(req.body);
+    const { name, phone, companyName, companyEmail, employeeSize, password } = validatedData;
 
-    // Check if company already exists
     let company = await Company.findOne({ companyEmail });
     if (company) {
       return res.status(400).json({ msg: 'Company already exists' });
     }
 
-    // Create new company
     company = new Company({
       name,
       phone,
       companyName,
       companyEmail,
       employeeSize,
-      password,
+      password
     });
 
-    // Hash password
     const salt = await bcrypt.genSalt(10);
     company.password = await bcrypt.hash(password, salt);
 
-    // Generate OTP for email and phone verification
-    const emailOtp = Math.floor(100000 + Math.random() * 900000); // 6-digit OTP
-    const phoneOtp = Math.floor(100000 + Math.random() * 900000); // 6-digit OTP
+    
+    const emailOTP = generateOTP();
+    const mobileOTP = generateOTP();
 
-    // Store OTPs in the company object
-    company.emailOtp = emailOtp;
-    company.mobileOtp = phoneOtp;
-
+    company.emailOtp = emailOTP;
+    company.mobileOtp = mobileOTP;
+    
     await company.save();
 
-    // Send OTP via email and SMS
-    sendVerificationEmail(company.companyEmail, emailOtp);
-    sendVerificationSMS(company.phone, phoneOtp);
+    console.log(emailOTP, mobileOTP);
 
-    const token = jwt.sign({ company: { id: company._id, companyEmail: company.companyEmail } }, process.env.JWT_SECRET);
+    sendVerificationEmail(
+      company.companyEmail,
+      'Verify Your Email',
+      'emailVerification',
+      { companyName: company.companyName, otp: emailOTP }
+    );
+    console.log("email sent");
 
-    res.status(201).json({
-      msg: 'Company registered successfully. Please verify your email and phone.',
-      token,
-      companyDetails: {
-        id: company._id,
-        name: company.name,
-        companyName: company.companyName,
-        companyEmail: company.companyEmail
-      }
-    });
+    // sendSMS(
+    //   company.phone,
+    //   `Your OTP for Job Board verification is ${mobileOTP}`
+    // );
+    // console.log("sms sent");
+
+    res.status(201).json({ msg: 'Company registered successfully. Please verify your email and phone.' });
   } catch (err) {
+    if (err.errors) {
+      return res.status(400).json({ errors: err.errors });
+    }
     console.error(err.message);
     res.status(500).send('Server error');
   }
@@ -71,28 +68,25 @@ router.post('/register', async (req, res) => {
 // Verify email
 router.post('/verify-email', async (req, res) => {
   try {
-    const { companyEmail, otp } = req.body;
-
+    const validatedData = verifyEmailSchema.parse(req.body);
+    const { companyEmail, otp } = validatedData;
+    console.log(companyEmail, otp);
     const company = await Company.findOne({ companyEmail });
     if (!company) {
       return res.status(400).json({ msg: 'Company not found' });
     }
 
-    // Check OTP
-    if (company.emailOtp != otp) {
-      return res.status(400).json({ msg: `Invalid OTP ${company.emailOtp} ${otp}` });
+    if (company.emailOtp === otp) {
+      company.isEmailVerified = true;
+      await company.save();
+      res.json({ msg: 'Email verified successfully' });
+    } else {
+      res.status(400).json({ msg: 'Invalid OTP' });
     }
-
-    console.log(company.emailOtp);
-    console.log(otp);
-
-    // Mark email as verified
-    company.isEmailVerified = true;
-    company.emailOtp = null; // clear OTP once verified
-    await company.save();
-
-    res.json({ msg: 'Email verified successfully' });
   } catch (err) {
+    if (err.errors) {
+      return res.status(400).json({ errors: err.errors });
+    }
     console.error(err.message);
     res.status(500).send('Server error');
   }
@@ -101,49 +95,127 @@ router.post('/verify-email', async (req, res) => {
 // Verify mobile
 router.post('/verify-mobile', async (req, res) => {
   try {
-    const { phone, otp } = req.body;
+    const validatedData = verifyMobileSchema.parse(req.body);
+    const { phone, otp } = validatedData;
 
     const company = await Company.findOne({ phone });
     if (!company) {
       return res.status(400).json({ msg: 'Company not found' });
     }
 
-    console.log(company.mobileOtp);
-    console.log(otp);
-    // Check OTP
-    if (company.mobileOtp != parseInt(otp)) {
-      return res.status(400).json({ msg: 'Invalid OTP' });
+    if (company.mobileOtp === otp) {
+      company.isMobileVerified = true;
+      await company.save();
+      res.json({ msg: 'Mobile verified successfully' });
+    } else {
+      res.status(400).json({ msg: 'Invalid OTP' });
+    }
+  } catch (err) {
+    if (err.errors) {
+      return res.status(400).json({ errors: err.errors });
+    }
+    console.error(err.message);
+    res.status(500).send('Server error');
+  }
+});
+
+// Login
+router.post('/login', async (req, res) => {
+  try {
+    const validatedData = loginSchema.parse(req.body);
+    const { companyEmail, password } = validatedData;
+
+    let company = await Company.findOne({ companyEmail });
+    if (!company) {
+      return res.status(400).json({ msg: 'Invalid credentials' });
     }
 
+    const isMatch = await bcrypt.compare(password, company.password);
+    if (!isMatch) {
+      return res.status(400).json({ msg: 'Invalid credentials' });
+    }
 
-    // Mark phone as verified
-    company.isMobileVerified = true;
-    company.mobileOtp = null; // clear OTP once verified
+    if (!company.isEmailVerified || !company.isMobileVerified) {
+      return res.status(400).json({ msg: 'Please verify your email and phone number' });
+    }
+
+    const payload = {
+      company: {
+        id: company.id
+      }
+    };
+
+    const token =jwt.sign(
+      payload,
+      process.env.JWT_SECRET,
+    );
+    console.log(token);
+    console.log(payload);
+    res.status(200).json({ msg: 'Login successful' , token});
+  } catch (err) {
+    if (err.errors) {
+      return res.status(400).json({ errors: err.errors });
+    }
+    console.error(err.message);
+    res.status(500).send('Server error');
+  }
+});
+
+// Request password reset
+router.post('/reset-password-request', async (req, res) => {
+  try {
+    const { companyEmail } = req.body;
+    const company = await Company.findOne({ companyEmail });
+    if (!company) {
+      return res.status(404).json({ msg: 'Company not found' });
+    }
+
+    const resetToken = generateOTP();
+    company.resetPasswordToken = resetToken;
+    company.resetPasswordExpires = Date.now() + 3600000; // 1 hour
     await company.save();
 
-    res.json({ msg: 'Mobile verified successfully' });
+    await sendEmail(
+      company.companyEmail,
+      'Password Reset Request',
+      'passwordReset',
+      { companyName: company.companyName, resetToken }
+    );
+
+    res.json({ msg: 'Password reset email sent' });
   } catch (err) {
     console.error(err.message);
     res.status(500).send('Server error');
   }
 });
 
-router.get('/company', async(req,res)=>{
+// Reset password
+router.post('/reset-password', async (req, res) => {
   try {
-    const company = await Company.find();
-    res.json(company);
-  } catch (err) {
-    console.error(err.message);
-    res.status(500).send('Server error');
-  }
-});
+    const validatedData = resetPasswordSchema.parse(req.body);
+    const { companyEmail, token, newPassword } = validatedData;
 
-// Verify token
-router.get('/verify-token', auth, async (req, res) => {
-  try {
-    const company = await Company.findById(req.company.id).select('-password');
-    res.json(company);
+    const company = await Company.findOne({
+      companyEmail,
+      resetPasswordToken: token,
+      resetPasswordExpires: { $gt: Date.now() }
+    });
+
+    if (!company) {
+      return res.status(400).json({ msg: 'Invalid or expired reset token' });
+    }
+
+    const salt = await bcrypt.genSalt(10);
+    company.password = await bcrypt.hash(newPassword, salt);
+    company.resetPasswordToken = undefined;
+    company.resetPasswordExpires = undefined;
+    await company.save();
+
+    res.json({ msg: 'Password reset successful' });
   } catch (err) {
+    if (err.errors) {
+      return res.status(400).json({ errors: err.errors });
+    }
     console.error(err.message);
     res.status(500).send('Server error');
   }
