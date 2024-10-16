@@ -1,4 +1,7 @@
 const nodemailer = require('nodemailer');
+const fs = require('fs').promises;
+const path = require('path');
+const handlebars = require('handlebars');
 
 const transporter = nodemailer.createTransport({
   service: 'gmail',
@@ -8,27 +11,35 @@ const transporter = nodemailer.createTransport({
   },
 });
 
-const sendVerificationEmail = async (email, otp) => {
-  const mailOptions = {
+const sendVerificationEmail = async (to, subject, templateName, context) => {
+    const templatePath = path.join(__dirname, `../emailTemplates/${templateName}.hbs`);
+    const emailTemplate = await fs.readFile(templatePath, 'utf-8');
+    const compiledTemplate = handlebars.compile(emailTemplate);
+    const html = compiledTemplate(context);
+    const mailOptions = {
     from: process.env.EMAIL_USER,
-    to: email,
-    subject: 'Verify your email',
-    text: `Your OTP for email verification is: ${otp}`,
+    to: to,
+    subject: subject,
+    html : html,
   };
 
   try {
     await transporter.sendMail(mailOptions);
-    console.log(`Email sent to ${email}`);
+    console.log(`Email sent to ${to}`);
   } catch (error) {
     console.error('Error sending email:', error);
   }
 };
 
-const sendJobAlerts = async (job) => {
-  const mailOptions = {
+const sendJobAlerts = async (subject, templateName, context, job) => {
+    const templatePath = path.join(__dirname, `../emailTemplates/${templateName}.hbs`);
+    const emailTemplate = await fs.readFile(templatePath, 'utf-8');
+    const compiledTemplate = handlebars.compile(emailTemplate);
+    const html = compiledTemplate(context);
+    const mailOptions = {
     from: process.env.EMAIL_USER,
-    subject: `New Job Opportunity: ${job.jobTitle}`,
-    text: `A new job matching your profile has been posted:\n\nTitle: ${job.jobTitle}\nDescription: ${job.jobDescription}\nExperience Level: ${job.experienceLevel}\n\nApply now!`,
+    subject: subject,
+    html : html,
   };
 
   for (const candidate of job.candidates) {

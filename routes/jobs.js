@@ -21,7 +21,7 @@ router.post('/', auth, async (req, res) => {
     const job = await newJob.save();
     console.log("job saved");
     // Send job alerts to candidates
-    await sendJobAlerts(job);
+    await sendJobAlerts(candidates,  'jobAlert','New Job Opportunity',job);
     console.log("job alerts sent");
     res.status(201).json(job);
   } catch (err) {
